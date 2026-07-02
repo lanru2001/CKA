@@ -1,0 +1,517 @@
+CKA 2025 version 
+1.	Select one out of the three NetworkPolicy manifests which matches the scenario described in the question (e.g., backend pods should only have ingress traffic from the frontend namespace).
+2.	Install the cridocker .deb package using the dpkg -i command and perform some follow-up tasks.
+3.	List all CRDs matching a keyword (cert-manager) and write them into a file. Then, document a field from the spec of the CRD using the kubectl explain command.
+4.	Expose a deployment using a NodePort service.
+5.	Create an HPA (Horizontal Pod Autoscaler) for an existing deployment.
+6.	Create an Ingress resource matching the scenario described in the question.
+7.	Create a Gateway with TLS and an HTTPRoute, matching the existing Ingress resource in the environment. Delete the Ingress after creating the Gateway.
+8.	Generate a Helm template and save it to a file using the helm template command. Then install the Helm chart with some changes to the Helm values. Both tasks were in a specific namespace, and a specific chart version was mentioned.
+9.	Create a PriorityClass with a modification compared to an existing user-defined PriorityClass.
+10.	Create a StorageClass.
+11.	Create a PVC and attach it to a Pod. There was an existing PV in the environment, and we had to choose PVC properties to match the PV.
+12.	Add a sidecar log container to an existing deployment by mounting a shared volume.
+13.	Change the ConfigMap properties of an existing NGINX ConfigMap to enable both TLSv1.2 and TLSv1.3. Only TLSv1.3 was enabled initially.
+14.	A deployment with three replicas had some pods in a pending state because the resource requests of containers exceeded the resources available on the node. Check the node’s CPU and memory, then divide them equally among the containers — keeping some overhead for system components and buffer — so that the deployment schedules all three replicas without any being pending.
+15.	kube-apiserver and kube-scheduler in a cluster were not working, but etcd, kube-controller-manager, and kubelet were. Troubleshoot and fix the issue.
+16.	Choose a CNI between Flannel and Calico that has built-in support for Network Policies (Calico supports them). Install the CNI and configure it to work with the current node’s PodCIDR.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+CKA 2025 Exam Solutions
+Here are detailed solutions for all 16 scenarios:
+ 
+1. NetworkPolicy — Select the Correct Manifest
+Scenario: Backend pods should only accept ingress from the frontend namespace.
+yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-allow-frontend
+  namespace: backend
+spec:
+  podSelector: {}           # selects ALL pods in the backend namespace
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: frontend
+How to choose the right manifest:
+•	Look for podSelector: {} targeting backend pods
+•	Look for namespaceSelector pointing to the frontend namespace
+•	Reject manifests using podSelector alone (pod-level, not namespace-level)
+•	Reject manifests with egress rules (wrong direction)
+ 
+2. Install cri-dockerd .deb Package
+bash
+# Install the package
+sudo dpkg -i cri-dockerd_*.deb
+
+# Fix any dependency issues
+sudo apt-get install -f
+
+# Enable and start the service
+sudo systemctl daemon-reload
+sudo systemctl enable cri-dockerd.service
+sudo systemctl enable cri-dockerd.socket
+sudo systemctl start cri-dockerd.service
+sudo systemctl start cri-dockerd.socket
+
+# Verify it's running
+sudo systemctl status cri-dockerd.service
+Common follow-up tasks:
+•	Configure kubelet to use --container-runtime-endpoint=unix:///var/run/cri-dockerd.sock
+•	Join the node to the cluster using kubeadm join with --cri-socket flag
+bash
+kubeadm join <control-plane>:6443 \
+  --token <token> \
+  --discovery-token-ca-cert-hash sha256:<hash> \
+  --cri-socket unix:///var/run/cri-dockerd.sock
+ 
+3. List CRDs Matching a Keyword + kubectl explain
+bash
+# List all CRDs matching "cert-manager" and write to file
+kubectl get crds | grep cert-manager > /path/to/output-file.txt
+
+# Or with full output
+kubectl get crds -o name | grep cert-manager >> /path/to/output-file.txt
+
+# Explain a specific field from the CRD spec
+# Example: certificates.cert-manager.io
+kubectl explain certificate.spec > /path/to/explain-output.txt
+
+# Explain a nested field
+kubectl explain certificate.spec.dnsNames >> /path/to/explain-output.txt
+
+# Pro tip: use --recursive to see all fields
+kubectl explain certificate.spec --recursive
+ 
+4. Expose a Deployment Using NodePort
+bash
+# Imperative (fastest in exam)
+kubectl expose deployment <deployment-name> \
+  --type=NodePort \
+  --port=80 \
+  --target-port=8080 \
+  --name=<service-name>
+
+# If you need to specify nodePort (must use manifest)
+yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
+spec:
+  type: NodePort
+  selector:
+    app: my-app          # must match deployment's pod labels
+  ports:
+    - port: 80
+      targetPort: 8080
+      nodePort: 30080    # 30000–32767 range
+bash
+# Verify
+kubectl get svc <service-name>
+kubectl describe svc <service-name>
+ 
+5. Create an HPA for an Existing Deployment
+bash
+# Imperative
+kubectl autoscale deployment <deployment-name> \
+  --min=2 \
+  --max=10 \
+  --cpu-percent=70
+
+# Verify
+kubectl get hpa
+kubectl describe hpa <deployment-name>
+yaml
+# Declarative
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: my-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: <deployment-name>
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+Note: Metrics Server must be installed for HPA to function.
+ 
+6. Create an Ingress Resource
+yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-ingress
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: my-service
+                port:
+                  number: 80
+bash
+# Verify
+kubectl get ingress
+kubectl describe ingress my-ingress
+ 
+7. Create a Gateway + HTTPRoute (then delete Ingress)
+yaml
+# Gateway
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: my-gateway
+  namespace: default
+spec:
+  gatewayClassName: nginx        # match existing GatewayClass
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: my-tls-secret  # existing TLS secret
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# HTTPRoute
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: my-httproute
+  namespace: default
+spec:
+  parentRefs:
+    - name: my-gateway
+  hostnames:
+    - "app.example.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: my-service
+          port: 80
+bash
+# After verifying Gateway is working, delete the Ingress
+kubectl delete ingress my-ingress
+
+# Verify
+kubectl get gateway
+kubectl get httproute
+ 
+8. Helm Template + Install with Custom Values
+bash
+# Generate Helm template and save to file (specific namespace + version)
+helm template <release-name> <chart-name> \
+  --namespace <namespace> \
+  --version <chart-version> \
+  > /path/to/template-output.yaml
+
+# Example with a repo
+helm template my-release bitnami/nginx \
+  --namespace staging \
+  --version 15.0.0 \
+  > /tmp/nginx-template.yaml
+
+# Install with custom values
+helm install <release-name> <chart-name> \
+  --namespace <namespace> \
+  --version <chart-version> \
+  --set replicaCount=2 \
+  --set service.type=NodePort
+
+# Or using a values file
+helm install <release-name> <chart-name> \
+  --namespace <namespace> \
+  --version <chart-version> \
+  --values custom-values.yaml
+
+# Verify
+helm list -n <namespace>
+kubectl get all -n <namespace>
+ 
+9. Create a PriorityClass
+bash
+# First, inspect existing PriorityClass
+kubectl get priorityclass
+kubectl describe priorityclass <existing-name>
+yaml
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority
+value: 1000000          # higher value = higher priority
+globalDefault: false    # only one PC can have true
+preemptionPolicy: PreemptLowerPriority   # or Never
+description: "High priority workloads"
+Key fields to modify vs existing: value, globalDefault, preemptionPolicy
+ 
+10. Create a StorageClass
+yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-storage
+provisioner: kubernetes.io/no-provisioner   # or driver like ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer     # or Immediate
+reclaimPolicy: Retain                       # or Delete
+allowVolumeExpansion: true
+parameters:
+  type: gp2                                 # provisioner-specific
+bash
+kubectl apply -f storageclass.yaml
+kubectl get sc
+ 
+11. Create PVC + Attach to Pod (Matching Existing PV)
+bash
+# First inspect the existing PV
+kubectl get pv
+kubectl describe pv <pv-name>
+# Note: capacity, accessModes, storageClassName
+yaml
+# PVC — properties MUST match the PV
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce          # match PV's accessModes exactly
+  resources:
+    requests:
+      storage: 1Gi           # must be <= PV capacity
+  storageClassName: ""       # empty string = use static PV (no dynamic provisioning)
+  volumeName: <pv-name>      # optionally bind directly
+---
+# Pod using the PVC
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-pod
+spec:
+  containers:
+    - name: app
+      image: nginx
+      volumeMounts:
+        - mountPath: /data
+          name: my-volume
+  volumes:
+    - name: my-volume
+      persistentVolumeClaim:
+        claimName: my-pvc
+bash
+kubectl get pvc   # should show Bound
+kubectl get pod   # should show Running
+ 
+12. Add Sidecar Log Container to Existing Deployment
+bash
+# Export existing deployment
+kubectl get deployment <name> -o yaml > deployment.yaml
+yaml
+# Edit deployment.yaml — add sidecar and shared volume
+spec:
+  template:
+    spec:
+      containers:
+        - name: main-app              # existing container
+          image: nginx
+          volumeMounts:
+            - name: shared-logs
+              mountPath: /var/log/app
+
+        - name: log-sidecar           # ADD THIS
+          image: busybox
+          command: ["sh", "-c", "tail -f /var/log/app/app.log"]
+          volumeMounts:
+            - name: shared-logs
+              mountPath: /var/log/app
+
+      volumes:                        # ADD THIS
+        - name: shared-logs
+          emptyDir: {}
+bash
+kubectl apply -f deployment.yaml
+kubectl get pods   # verify both containers are running
+kubectl logs <pod-name> -c log-sidecar
+ 
+13. Update NGINX ConfigMap to Enable TLSv1.2 + TLSv1.3
+bash
+# Inspect existing ConfigMap
+kubectl get configmap -n ingress-nginx
+kubectl describe configmap nginx-configuration -n ingress-nginx
+bash
+# Edit the ConfigMap directly
+kubectl edit configmap nginx-configuration -n ingress-nginx
+yaml
+# Change this field (was only TLSv1.3):
+data:
+  ssl-protocols: "TLSv1.2 TLSv1.3"   # space-separated, add TLSv1.2
+bash
+# Or patch it
+kubectl patch configmap nginx-configuration \
+  -n ingress-nginx \
+  --type merge \
+  -p '{"data":{"ssl-protocols":"TLSv1.2 TLSv1.3"}}'
+
+# Verify (NGINX controller picks it up automatically)
+kubectl get configmap nginx-configuration -n ingress-nginx -o yaml
+ 
+14. Fix Pending Pods — Adjust Resource Requests
+bash
+# Step 1: Check node capacity
+kubectl describe node <node-name> | grep -A 10 "Capacity:"
+kubectl describe node <node-name> | grep -A 10 "Allocatable:"
+
+# Step 2: Check current resource requests
+kubectl describe deployment <name>
+kubectl describe pods | grep -A 5 "Requests:"
+Formula:
+Allocatable CPU / 3 replicas = per-container CPU (minus overhead)
+Allocatable Memory / 3 replicas = per-container Memory (minus overhead)
+
+# Example: Node has 2 CPU / 4Gi allocatable
+# Reserve ~10% overhead → use 1.8 CPU / 3.6Gi for pods
+# Per container: 600m CPU / 1.2Gi Memory
+bash
+# Patch the deployment
+kubectl set resources deployment <name> \
+  --containers=<container-name> \
+  --requests=cpu=600m,memory=1200Mi \
+  --limits=cpu=600m,memory=1200Mi
+
+# Verify all 3 pods schedule
+kubectl get pods -w
+kubectl describe pod <pending-pod> | grep -A 10 Events:
+ 
+15. Troubleshoot kube-apiserver + kube-scheduler
+Both are static pods — check /etc/kubernetes/manifests/.
+bash
+# Step 1: Check static pod manifests
+ls /etc/kubernetes/manifests/
+sudo cat /etc/kubernetes/manifests/kube-apiserver.yaml
+sudo cat /etc/kubernetes/manifests/kube-scheduler.yaml
+
+# Step 2: Check kubelet logs (it manages static pods)
+sudo journalctl -u kubelet -n 100 --no-pager
+
+# Step 3: Check container logs (crictl since API is down)
+sudo crictl ps -a | grep -E "apiserver|scheduler"
+sudo crictl logs <container-id>
+
+# Common issues and fixes:
+Issue	Fix
+Wrong --etcd-servers URL	Correct to https://127.0.0.1:2379
+Bad cert path in --tls-cert-file	Fix path to /etc/kubernetes/pki/apiserver.crt
+Wrong --advertise-address	Set to correct node IP
+Scheduler wrong --kubeconfig path	Fix to /etc/kubernetes/scheduler.conf
+Image tag typo (e.g. v1.3O.0 vs v1.30.0)	Fix image tag in manifest
+Port conflict	Check --secure-port value
+bash
+# After editing manifests, kubelet auto-restarts the pods
+# Monitor recovery:
+watch crictl ps | grep -E "apiserver|scheduler"
+
+# Once API is back:
+kubectl get pods -n kube-system
+kubectl cluster-info
+ 
+16. Choose CNI: Calico (supports NetworkPolicy) — Install + Configure
+Answer: Calico — Flannel does not support NetworkPolicy natively.
+bash
+# Step 1: Check node's PodCIDR
+kubectl get node <node-name> -o jsonpath='{.spec.podCIDR}'
+# or
+kubectl cluster-info dump | grep -m 1 cluster-cidr
+
+# Step 2: Install Calico (operator method — current standard)
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.0/manifests/tigera-operator.yaml
+
+# Step 3: Configure with correct CIDR
+cat <<EOF | kubectl apply -f -
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    ipPools:
+      - blockSize: 26
+        cidr: 10.244.0.0/16    # ← replace with your actual PodCIDR
+        encapsulation: VXLANCrossSubnet
+        natOutgoing: Enabled
+        nodeSelector: all()
+EOF
+
+# Step 4: Verify Calico pods come up
+watch kubectl get pods -n calico-system
+
+# Step 5: Verify node becomes Ready
+kubectl get nodes
+ 
+Quick Reference Cheat Sheet
+#	Topic	Key Command
+1	NetworkPolicy	Check namespaceSelector vs podSelector
+2	CRI install	dpkg -i → systemctl enable/start
+3	CRDs	kubectl get crds | grep <keyword>
+4	NodePort	kubectl expose deployment --type=NodePort
+5	HPA	kubectl autoscale deployment --cpu-percent
+6	Ingress	ingressClassName + pathType: Prefix
+7	Gateway	Create Gateway → HTTPRoute → delete Ingress
+8	Helm	helm template then helm install --set
+9	PriorityClass	Mind value and globalDefault
+10	StorageClass	Match provisioner to environment
+11	PVC+Pod	Match accessModes and storageClassName to PV
+12	Sidecar	Add container + emptyDir shared volume
+13	ConfigMap	ssl-protocols: "TLSv1.2 TLSv1.3"
+14	Resources	Allocatable ÷ replicas − overhead
+15	Static Pods	Fix /etc/kubernetes/manifests/*.yaml
+16	CNI	Calico for NetworkPolicy support
+Good luck on your CKA! 🎯
